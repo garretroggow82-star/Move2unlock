@@ -100,17 +100,14 @@ fun Move2UnlockApp(blockedPackage: String?) {
                             "Complete 20 squats to unlock $appName for 30 minutes."
                         )
 
-                        Text(
-                            "$reps / 20",
-                            style = MaterialTheme.typography.headlineMedium
-                        )
+                        SquatCamera(
+                            reps = reps,
+                            target = 20,
+                            onRep = {
+                                val newReps = reps + 1
+                                reps = newReps
 
-                        Button(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                reps++
-
-                                if (reps >= 20) {
+                                if (newReps >= 20) {
 
                                     val unlockUntil =
                                         System.currentTimeMillis() + 1_800_000L
@@ -127,9 +124,7 @@ fun Move2UnlockApp(blockedPackage: String?) {
                                     unlocked = true
                                 }
                             }
-                        ) {
-                            Text("Complete Rep")
-                        }
+                        )
 
                     } else {
 
