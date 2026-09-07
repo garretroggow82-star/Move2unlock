@@ -89,7 +89,8 @@ fun Move2UnlockApp(blockedPackage: String?) {
 
             Text("Earn your screen time.")
 
-            Button(
+            if (blockedPackage == null) {
+        Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
                     context.startActivity(
@@ -138,7 +139,9 @@ fun Move2UnlockApp(blockedPackage: String?) {
             )
 
 
-            Card {
+            }
+
+        Card {
                 Column(
                     modifier = Modifier.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(15.dp)
