@@ -24,6 +24,7 @@ import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.PoseLandmark
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import java.util.concurrent.Executors
+import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.sqrt
 
@@ -97,6 +98,8 @@ fun SquatCamera(
 
                     var wentDown = false
                     var lastRep = 0L
+                    var lastShoulderY: Float? = null
+                    var cameraMoved = false
 
                     providerFuture.addListener({
 
@@ -134,6 +137,40 @@ fun SquatCamera(
                             detector.process(image)
                                 .addOnSuccessListener { pose ->
 
+                                    val leftShoulder =
+                                        pose.getPoseLandmark(
+                                            PoseLandmark.LEFT_SHOULDER
+                                        )
+
+                                    val rightShoulder =
+                                        pose.getPoseLandmark(
+                                            PoseLandmark.RIGHT_SHOULDER
+                                        )
+
+                                    val shoulderYs = listOfNotNull(
+                                        leftShoulder?.position?.y,
+                                        rightShoulder?.position?.y
+                                    )
+
+                                    if (shoulderYs.isNotEmpty()) {
+                                        val shoulderY = shoulderYs.average().toFloat()
+
+                                        lastShoulderY?.let { previous ->
+                                            val shift = abs(shoulderY - previous)
+
+                                            if (shift > 55f) {
+                                                cameraMoved = true
+                                                wentDown = false
+
+                                                activity.runOnUiThread {
+                                                    status = "Keep the phone still."
+                                                }
+                                            }
+                                        }
+
+                                        lastShoulderY = shoulderY
+                                    }
+
                                     val leftAngle = getLegAngle(
                                         pose.getPoseLandmark(PoseLandmark.LEFT_HIP)?.position,
                                         pose.getPoseLandmark(PoseLandmark.LEFT_KNEE)?.position,
@@ -158,7 +195,7 @@ fun SquatCamera(
 
                                     val angle = validAngles.average()
 
-                                    if (angle < 105) {
+                                    if (angle < 105 && !cameraMoved) {
                                         wentDown = true
 
                                         activity.runOnUiThread {
@@ -166,12 +203,11 @@ fun SquatCamera(
                                         }
                                     }
 
-                                    if (wentDown && angle > 160) {
+                                    if (wentDown && angle > 160 && !cameraMoved) {
 
                                         val now = System.currentTimeMillis()
 
                                         if (now - lastRep > 1000) {
-
                                             wentDown = false
                                             lastRep = now
 
@@ -182,9 +218,13 @@ fun SquatCamera(
                                         }
                                     }
 
-                                    if (!wentDown && angle > 160) {
-                                        activity.runOnUiThread {
-                                            status = "Standing — squat down."
+                                    if (angle > 160) {
+                                        cameraMoved = false
+
+                                        if (!wentDown) {
+                                            activity.runOnUiThread {
+                                                status = "Standing — squat down."
+                                            }
                                         }
                                     }
                                 }
