@@ -1,8 +1,8 @@
 package com.move2unlock.app
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.view.accessibility.AccessibilityEvent
-import android.widget.Toast
 
 class AppBlockerService : AccessibilityService() {
 
@@ -17,15 +17,25 @@ class AppBlockerService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
 
-        if (packageName in blockedApps) {
-            Toast.makeText(
-                this,
-                "🔒 Complete your reps in Move2Unlock first!",
-                Toast.LENGTH_SHORT
-            ).show()
+        if (packageName !in blockedApps) return
 
-            performGlobalAction(GLOBAL_ACTION_HOME)
+        val prefs = getSharedPreferences("move2unlock", MODE_PRIVATE)
+        val unlockUntil = prefs.getLong("unlock_$packageName", 0L)
+
+        if (System.currentTimeMillis() < unlockUntil) {
+            return
         }
+
+        val intent = Intent(this, MainActivity::class.java).apply {
+            putExtra("blocked_package", packageName)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+
+        startActivity(intent)
     }
 
     override fun onInterrupt() {
