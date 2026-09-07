@@ -24,7 +24,6 @@ import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.PoseLandmark
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import java.util.concurrent.Executors
-import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.sqrt
 
@@ -47,7 +46,7 @@ fun SquatCamera(
     }
 
     var status by remember {
-        mutableStateOf("Stand where your hips, knees and ankles are visible.")
+        mutableStateOf("Stand where your full legs are visible.")
     }
 
     val permissionLauncher =
@@ -61,7 +60,9 @@ fun SquatCamera(
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
 
         Text(
             "$reps / $target",
@@ -70,146 +71,213 @@ fun SquatCamera(
 
         Text(status)
 
-        if (hasPermission) {
+        if (!hasPermission) {
+            Text("Camera permission is required.")
+            return@Column
+        }
 
-            AndroidView(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(420.dp),
-                factory = { ctx ->
+        AndroidView(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(420.dp),
 
-                    val previewView = PreviewView(ctx)
+            factory = { ctx ->
 
-                    val providerFuture =
-                        ProcessCameraProvider.getInstance(ctx)
+                val previewView = PreviewView(ctx)
 
-                    val executor =
-                        Executors.newSingleThreadExecutor()
+                val cameraProviderFuture =
+                    ProcessCameraProvider.getInstance(ctx)
 
-                    val options =
+                val executor =
+                    Executors.newSingleThreadExecutor()
+
+                val detector =
+                    PoseDetection.getClient(
                         PoseDetectorOptions.Builder()
                             .setDetectorMode(
                                 PoseDetectorOptions.STREAM_MODE
                             )
                             .build()
+                    )
 
-                    val detector =
-                        PoseDetection.getClient(options)
+                var previousPoints =
+                    emptyMap<Int, PointF>()
 
-                    var wentDown = false
-                    var lastRep = 0L
-                    var lastShoulderY: Float? = null
-                    var cameraMoved = false
+                var downFrames = 0
+                var upFrames = 0
+                var wentDown = false
+                var lastRepTime = 0L
 
-                    providerFuture.addListener({
+                cameraProviderFuture.addListener({
 
-                        val provider = providerFuture.get()
+                    val provider =
+                        cameraProviderFuture.get()
 
-                        val preview =
-                            Preview.Builder().build()
+                    val preview =
+                        Preview.Builder().build()
 
-                        preview.setSurfaceProvider(
-                            previewView.surfaceProvider
-                        )
+                    preview.setSurfaceProvider(
+                        previewView.surfaceProvider
+                    )
 
-                        val analysis =
-                            ImageAnalysis.Builder()
-                                .setBackpressureStrategy(
-                                    ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
+                    val analysis =
+                        ImageAnalysis.Builder()
+                            .setBackpressureStrategy(
+                                ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
+                            )
+                            .build()
+
+                    analysis.setAnalyzer(executor) { proxy ->
+
+                        val mediaImage = proxy.image
+
+                        if (mediaImage == null) {
+                            proxy.close()
+                            return@setAnalyzer
+                        }
+
+                        val image =
+                            InputImage.fromMediaImage(
+                                mediaImage,
+                                proxy.imageInfo.rotationDegrees
+                            )
+
+                        detector.process(image)
+                            .addOnSuccessListener { pose ->
+
+                                val landmarkTypes = listOf(
+                                    PoseLandmark.LEFT_SHOULDER,
+                                    PoseLandmark.RIGHT_SHOULDER,
+                                    PoseLandmark.LEFT_HIP,
+                                    PoseLandmark.RIGHT_HIP,
+                                    PoseLandmark.LEFT_KNEE,
+                                    PoseLandmark.RIGHT_KNEE,
+                                    PoseLandmark.LEFT_ANKLE,
+                                    PoseLandmark.RIGHT_ANKLE
                                 )
-                                .build()
 
-                        analysis.setAnalyzer(executor) { proxy ->
+                                val currentPoints =
+                                    mutableMapOf<Int, PointF>()
 
-                            val mediaImage = proxy.image
+                                landmarkTypes.forEach { type ->
 
-                            if (mediaImage == null) {
-                                proxy.close()
-                                return@setAnalyzer
-                            }
+                                    val landmark =
+                                        pose.getPoseLandmark(type)
 
-                            val image =
-                                InputImage.fromMediaImage(
-                                    mediaImage,
-                                    proxy.imageInfo.rotationDegrees
-                                )
+                                    if (
+                                        landmark != null &&
+                                        landmark.inFrameLikelihood > 0.55f
+                                    ) {
+                                        currentPoints[type] =
+                                            landmark.position
+                                    }
+                                }
 
-                            detector.process(image)
-                                .addOnSuccessListener { pose ->
-
-                                    val leftShoulder =
-                                        pose.getPoseLandmark(
-                                            PoseLandmark.LEFT_SHOULDER
-                                        )
-
-                                    val rightShoulder =
-                                        pose.getPoseLandmark(
-                                            PoseLandmark.RIGHT_SHOULDER
-                                        )
-
-                                    val shoulderYs = listOfNotNull(
-                                        leftShoulder?.position?.y,
-                                        rightShoulder?.position?.y
+                                val cameraMoved =
+                                    detectCameraMovement(
+                                        previousPoints,
+                                        currentPoints
                                     )
 
-                                    if (shoulderYs.isNotEmpty()) {
-                                        val shoulderY = shoulderYs.average().toFloat()
+                                previousPoints = currentPoints
 
-                                        lastShoulderY?.let { previous ->
-                                            val shift = abs(shoulderY - previous)
+                                if (cameraMoved) {
 
-                                            if (shift > 55f) {
-                                                cameraMoved = true
-                                                wentDown = false
+                                    downFrames = 0
+                                    upFrames = 0
+                                    wentDown = false
 
-                                                activity.runOnUiThread {
-                                                    status = "Keep the phone still."
-                                                }
-                                            }
-                                        }
-
-                                        lastShoulderY = shoulderY
+                                    activity.runOnUiThread {
+                                        status =
+                                            "Keep the phone still."
                                     }
 
-                                    val leftAngle = getLegAngle(
-                                        pose.getPoseLandmark(PoseLandmark.LEFT_HIP)?.position,
-                                        pose.getPoseLandmark(PoseLandmark.LEFT_KNEE)?.position,
-                                        pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE)?.position
+                                    return@addOnSuccessListener
+                                }
+
+                                val leftAngle =
+                                    getLegAngle(
+                                        currentPoints[
+                                            PoseLandmark.LEFT_HIP
+                                        ],
+                                        currentPoints[
+                                            PoseLandmark.LEFT_KNEE
+                                        ],
+                                        currentPoints[
+                                            PoseLandmark.LEFT_ANKLE
+                                        ]
                                     )
 
-                                    val rightAngle = getLegAngle(
-                                        pose.getPoseLandmark(PoseLandmark.RIGHT_HIP)?.position,
-                                        pose.getPoseLandmark(PoseLandmark.RIGHT_KNEE)?.position,
-                                        pose.getPoseLandmark(PoseLandmark.RIGHT_ANKLE)?.position
+                                val rightAngle =
+                                    getLegAngle(
+                                        currentPoints[
+                                            PoseLandmark.RIGHT_HIP
+                                        ],
+                                        currentPoints[
+                                            PoseLandmark.RIGHT_KNEE
+                                        ],
+                                        currentPoints[
+                                            PoseLandmark.RIGHT_ANKLE
+                                        ]
                                     )
 
-                                    val validAngles =
-                                        listOfNotNull(leftAngle, rightAngle)
+                                val angles =
+                                    listOfNotNull(
+                                        leftAngle,
+                                        rightAngle
+                                    )
 
-                                    if (validAngles.isEmpty()) {
-                                        activity.runOnUiThread {
-                                            status = "Move back so your full legs are visible."
-                                        }
-                                        return@addOnSuccessListener
+                                if (angles.isEmpty()) {
+                                    activity.runOnUiThread {
+                                        status =
+                                            "Move back so your hips, knees and ankles are visible."
+                                    }
+                                    return@addOnSuccessListener
+                                }
+
+                                val kneeAngle =
+                                    angles.average()
+
+                                if (!wentDown) {
+
+                                    if (kneeAngle < 110) {
+                                        downFrames++
+                                    } else {
+                                        downFrames = 0
                                     }
 
-                                    val angle = validAngles.average()
+                                    if (downFrames >= 4) {
 
-                                    if (angle < 105 && !cameraMoved) {
                                         wentDown = true
+                                        upFrames = 0
 
                                         activity.runOnUiThread {
-                                            status = "Good depth — stand back up."
+                                            status =
+                                                "Good squat — stand up."
                                         }
                                     }
 
-                                    if (wentDown && angle > 160 && !cameraMoved) {
+                                } else {
 
-                                        val now = System.currentTimeMillis()
+                                    if (kneeAngle > 155) {
+                                        upFrames++
+                                    } else {
+                                        upFrames = 0
+                                    }
 
-                                        if (now - lastRep > 1000) {
+                                    if (upFrames >= 4) {
+
+                                        val now =
+                                            System.currentTimeMillis()
+
+                                        if (
+                                            now - lastRepTime > 1200
+                                        ) {
+
+                                            lastRepTime = now
                                             wentDown = false
-                                            lastRep = now
+                                            downFrames = 0
+                                            upFrames = 0
 
                                             activity.runOnUiThread {
                                                 status = "Rep counted!"
@@ -217,40 +285,91 @@ fun SquatCamera(
                                             }
                                         }
                                     }
-
-                                    if (angle > 160) {
-                                        cameraMoved = false
-
-                                        if (!wentDown) {
-                                            activity.runOnUiThread {
-                                                status = "Standing — squat down."
-                                            }
-                                        }
-                                    }
                                 }
-                                .addOnCompleteListener {
-                                    proxy.close()
-                                }
-                        }
+                            }
+                            .addOnCompleteListener {
+                                proxy.close()
+                            }
+                    }
 
-                        provider.unbindAll()
+                    provider.unbindAll()
 
-                        provider.bindToLifecycle(
-                            activity,
-                            CameraSelector.DEFAULT_FRONT_CAMERA,
-                            preview,
-                            analysis
-                        )
+                    provider.bindToLifecycle(
+                        activity,
+                        CameraSelector.DEFAULT_FRONT_CAMERA,
+                        preview,
+                        analysis
+                    )
 
-                    }, ContextCompat.getMainExecutor(ctx))
+                }, ContextCompat.getMainExecutor(ctx))
 
-                    previewView
-                }
-            )
-        } else {
-            Text("Camera permission is required.")
-        }
+                previewView
+            }
+        )
+
+        Text(
+            "Keep the phone stationary. Move your body, not the camera."
+        )
     }
+}
+
+private fun detectCameraMovement(
+    previous: Map<Int, PointF>,
+    current: Map<Int, PointF>
+): Boolean {
+
+    val common =
+        previous.keys.intersect(current.keys)
+
+    if (common.size < 5) {
+        return false
+    }
+
+    val changes = common.map { key ->
+
+        val old = previous[key]!!
+        val new = current[key]!!
+
+        Pair(
+            new.x - old.x,
+            new.y - old.y
+        )
+    }
+
+    val meanX =
+        changes.map { it.first }.average()
+
+    val meanY =
+        changes.map { it.second }.average()
+
+    val overallMovement =
+        sqrt(
+            meanX * meanX +
+            meanY * meanY
+        )
+
+    val differenceFromGroup =
+        changes.map { change ->
+
+            val dx =
+                change.first - meanX
+
+            val dy =
+                change.second - meanY
+
+            sqrt(
+                dx * dx +
+                dy * dy
+            )
+        }.average()
+
+    /*
+       If nearly every body landmark moves together
+       in the same direction, the phone probably moved.
+    */
+
+    return overallMovement > 14.0 &&
+           differenceFromGroup < 8.0
 }
 
 private fun getLegAngle(
@@ -259,7 +378,11 @@ private fun getLegAngle(
     ankle: PointF?
 ): Double? {
 
-    if (hip == null || knee == null || ankle == null) {
+    if (
+        hip == null ||
+        knee == null ||
+        ankle == null
+    ) {
         return null
     }
 
@@ -269,15 +392,26 @@ private fun getLegAngle(
     val bx = ankle.x - knee.x
     val by = ankle.y - knee.y
 
-    val dot = ax * bx + ay * by
+    val dot =
+        ax * bx +
+        ay * by
 
     val magA =
-        sqrt((ax * ax + ay * ay).toDouble())
+        sqrt(
+            (ax * ax + ay * ay)
+                .toDouble()
+        )
 
     val magB =
-        sqrt((bx * bx + by * by).toDouble())
+        sqrt(
+            (bx * bx + by * by)
+                .toDouble()
+        )
 
-    if (magA == 0.0 || magB == 0.0) {
+    if (
+        magA == 0.0 ||
+        magB == 0.0
+    ) {
         return null
     }
 
@@ -285,5 +419,7 @@ private fun getLegAngle(
         (dot / (magA * magB))
             .coerceIn(-1.0, 1.0)
 
-    return Math.toDegrees(acos(cosine))
+    return Math.toDegrees(
+        acos(cosine)
+    )
 }
