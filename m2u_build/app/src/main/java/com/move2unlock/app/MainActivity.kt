@@ -60,6 +60,13 @@ fun Move2UnlockApp(blockedPackage: String?) {
         mutableStateOf(false)
     }
 
+    var unlockMinutes by remember {
+        mutableStateOf(
+            context.getSharedPreferences("move2unlock", 0)
+                .getInt("unlock_minutes", 30)
+        )
+    }
+
     var targetReps by remember {
         mutableStateOf(
             context.getSharedPreferences("move2unlock", 0)
@@ -83,6 +90,24 @@ fun Move2UnlockApp(blockedPackage: String?) {
             Text("Earn your screen time.")
 
             Text("Squats required: $targetReps")
+
+            Text("Unlock time: $unlockMinutes minutes")
+
+            Slider(
+                value = unlockMinutes.toFloat(),
+                onValueChange = { value ->
+                    val rounded = ((value / 5).toInt() * 5).coerceIn(5, 60)
+                    unlockMinutes = rounded
+                },
+                onValueChangeFinished = {
+                    context.getSharedPreferences("move2unlock", 0)
+                        .edit()
+                        .putInt("unlock_minutes", unlockMinutes)
+                        .apply()
+                },
+                valueRange = 5f..60f,
+                steps = 10
+            )
 
             Slider(
                 value = targetReps.toFloat(),
@@ -123,7 +148,7 @@ fun Move2UnlockApp(blockedPackage: String?) {
                     if (!unlocked) {
 
                         Text(
-                            "Complete $targetReps squats to unlock $appName for 30 minutes."
+                            "Complete $targetReps squats to unlock $appName for $unlockMinutes minutes."
                         )
 
                         SquatCamera(
@@ -136,7 +161,7 @@ fun Move2UnlockApp(blockedPackage: String?) {
                                 if (newReps >= targetReps) {
 
                                     val unlockUntil =
-                                        System.currentTimeMillis() + 1_800_000L
+                                        System.currentTimeMillis() + (unlockMinutes * 60_000L)
 
                                     context
                                         .getSharedPreferences("move2unlock", 0)
@@ -154,7 +179,7 @@ fun Move2UnlockApp(blockedPackage: String?) {
 
                     } else {
 
-                        Text("$appName is unlocked for 30 minutes.")
+                        Text("$appName is unlocked for $unlockMinutes minutes.")
 
                         Button(
                             modifier = Modifier.fillMaxWidth(),
