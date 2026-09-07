@@ -89,6 +89,18 @@ fun Move2UnlockApp(blockedPackage: String?) {
 
             Text("Earn your screen time.")
 
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    context.startActivity(
+                        Intent(context, AppPickerActivity::class.java)
+                    )
+                }
+            ) {
+                Text("Choose Apps")
+            }
+
+
             Text("Squats required: $targetReps")
 
             Text("Unlock time: $unlockMinutes minutes")

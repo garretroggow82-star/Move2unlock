@@ -6,18 +6,25 @@ import android.view.accessibility.AccessibilityEvent
 
 class AppBlockerService : AccessibilityService() {
 
-    private val blockedApps = setOf(
-        "com.facebook.katana",
-        "com.instagram.android",
-        "com.zhiliaoapp.musically"
-    )
+    private fun getBlockedApps(): Set<String> {
+        val prefs = getSharedPreferences("move2unlock", MODE_PRIVATE)
+
+        return prefs.getStringSet(
+            "blocked_apps",
+            setOf(
+                "com.facebook.katana",
+                "com.instagram.android",
+                "com.zhiliaoapp.musically"
+            )
+        ) ?: emptySet()
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
 
         val pkg = event.packageName?.toString() ?: return
 
-        if (pkg !in blockedApps) return
+        if (pkg !in getBlockedApps()) return
 
         val prefs = getSharedPreferences("move2unlock", MODE_PRIVATE)
 

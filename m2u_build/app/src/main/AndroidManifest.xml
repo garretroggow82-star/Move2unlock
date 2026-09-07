@@ -4,9 +4,10 @@
     <uses-permission android:name="android.permission.CAMERA" />
 
     <queries>
-        <package android:name="com.facebook.katana" />
-        <package android:name="com.instagram.android" />
-        <package android:name="com.zhiliaoapp.musically" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application
@@ -14,6 +15,10 @@
         android:label="Move2Unlock"
         android:supportsRtl="true"
         android:theme="@style/Theme.Move2Unlock">
+
+        <activity
+            android:name=".AppPickerActivity"
+            android:exported="false" />
 
         <activity
             android:name=".MainActivity"
