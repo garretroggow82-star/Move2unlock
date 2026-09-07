@@ -60,6 +60,13 @@ fun Move2UnlockApp(blockedPackage: String?) {
         mutableStateOf(false)
     }
 
+    var targetReps by remember {
+        mutableStateOf(
+            context.getSharedPreferences("move2unlock", 0)
+                .getInt("target_reps", 20)
+        )
+    }
+
     MaterialTheme {
         Column(
             modifier = Modifier
@@ -74,6 +81,25 @@ fun Move2UnlockApp(blockedPackage: String?) {
             )
 
             Text("Earn your screen time.")
+
+            Text("Squats required: $targetReps")
+
+            Slider(
+                value = targetReps.toFloat(),
+                onValueChange = { value ->
+                    val rounded = ((value / 5).toInt() * 5).coerceIn(5, 100)
+                    targetReps = rounded
+                },
+                onValueChangeFinished = {
+                    context.getSharedPreferences("move2unlock", 0)
+                        .edit()
+                        .putInt("target_reps", targetReps)
+                        .apply()
+                },
+                valueRange = 5f..100f,
+                steps = 18
+            )
+
 
             Card {
                 Column(
@@ -97,17 +123,17 @@ fun Move2UnlockApp(blockedPackage: String?) {
                     if (!unlocked) {
 
                         Text(
-                            "Complete 20 squats to unlock $appName for 30 minutes."
+                            "Complete $targetReps squats to unlock $appName for 30 minutes."
                         )
 
                         SquatCamera(
                             reps = reps,
-                            target = 20,
+                            target = targetReps,
                             onRep = {
                                 val newReps = reps + 1
                                 reps = newReps
 
-                                if (newReps >= 20) {
+                                if (newReps >= targetReps) {
 
                                     val unlockUntil =
                                         System.currentTimeMillis() + 1_800_000L
