@@ -2,6 +2,7 @@ package com.move2unlock.app
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.PointF
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,8 +19,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.pose.PoseDetection
+import com.google.mlkit.vision.pose.PoseLandmark
+import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import java.util.concurrent.Executors
-import kotlin.math.abs
+import kotlin.math.acos
+import kotlin.math.sqrt
 
 @Composable
 fun SquatCamera(
@@ -39,12 +45,14 @@ fun SquatCamera(
         )
     }
 
+    var status by remember {
+        mutableStateOf("Stand where your hips, knees and ankles are visible.")
+    }
+
     val permissionLauncher =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission()
-        ) { granted ->
-            hasPermission = granted
-        }
+        ) { hasPermission = it }
 
     LaunchedEffect(Unit) {
         if (!hasPermission) {
@@ -52,17 +60,17 @@ fun SquatCamera(
         }
     }
 
-    Column(
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+
         Text(
             "$reps / $target",
             style = MaterialTheme.typography.headlineMedium
         )
 
-        if (!hasPermission) {
-            Text("Camera permission is required.")
-        } else {
+        Text(status)
+
+        if (hasPermission) {
+
             AndroidView(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -70,22 +78,36 @@ fun SquatCamera(
                 factory = { ctx ->
 
                     val previewView = PreviewView(ctx)
-                    val cameraProviderFuture =
+
+                    val providerFuture =
                         ProcessCameraProvider.getInstance(ctx)
 
                     val executor =
                         Executors.newSingleThreadExecutor()
 
-                    var baseline = -1.0
-                    var downDetected = false
-                    var lastRepTime = 0L
+                    val options =
+                        PoseDetectorOptions.Builder()
+                            .setDetectorMode(
+                                PoseDetectorOptions.STREAM_MODE
+                            )
+                            .build()
 
-                    cameraProviderFuture.addListener({
+                    val detector =
+                        PoseDetection.getClient(options)
 
-                        val provider = cameraProviderFuture.get()
+                    var wentDown = false
+                    var lastRep = 0L
 
-                        val preview = Preview.Builder().build()
-                        preview.setSurfaceProvider(previewView.surfaceProvider)
+                    providerFuture.addListener({
+
+                        val provider = providerFuture.get()
+
+                        val preview =
+                            Preview.Builder().build()
+
+                        preview.setSurfaceProvider(
+                            previewView.surfaceProvider
+                        )
 
                         val analysis =
                             ImageAnalysis.Builder()
@@ -94,68 +116,81 @@ fun SquatCamera(
                                 )
                                 .build()
 
-                        analysis.setAnalyzer(executor) { imageProxy ->
+                        analysis.setAnalyzer(executor) { proxy ->
 
-                            val plane = imageProxy.planes.firstOrNull()
+                            val mediaImage = proxy.image
 
-                            if (plane == null) {
-                                imageProxy.close()
+                            if (mediaImage == null) {
+                                proxy.close()
                                 return@setAnalyzer
                             }
 
-                            val buffer = plane.buffer
-                            val remaining = buffer.remaining()
+                            val image =
+                                InputImage.fromMediaImage(
+                                    mediaImage,
+                                    proxy.imageInfo.rotationDegrees
+                                )
 
-                            if (remaining < 1000) {
-                                imageProxy.close()
-                                return@setAnalyzer
-                            }
+                            detector.process(image)
+                                .addOnSuccessListener { pose ->
 
-                            val step = maxOf(1, remaining / 500)
+                                    val leftAngle = getLegAngle(
+                                        pose.getPoseLandmark(PoseLandmark.LEFT_HIP)?.position,
+                                        pose.getPoseLandmark(PoseLandmark.LEFT_KNEE)?.position,
+                                        pose.getPoseLandmark(PoseLandmark.LEFT_ANKLE)?.position
+                                    )
 
-                            var sum = 0L
-                            var count = 0
-                            var i = 0
+                                    val rightAngle = getLegAngle(
+                                        pose.getPoseLandmark(PoseLandmark.RIGHT_HIP)?.position,
+                                        pose.getPoseLandmark(PoseLandmark.RIGHT_KNEE)?.position,
+                                        pose.getPoseLandmark(PoseLandmark.RIGHT_ANKLE)?.position
+                                    )
 
-                            while (i < remaining) {
-                                val value = buffer.get(i).toInt() and 0xFF
-                                sum += value
-                                count++
-                                i += step
-                            }
+                                    val validAngles =
+                                        listOfNotNull(leftAngle, rightAngle)
 
-                            val brightness =
-                                if (count > 0) sum.toDouble() / count else 0.0
+                                    if (validAngles.isEmpty()) {
+                                        activity.runOnUiThread {
+                                            status = "Move back so your full legs are visible."
+                                        }
+                                        return@addOnSuccessListener
+                                    }
 
-                            if (baseline < 0) {
-                                baseline = brightness
-                            } else {
-                                baseline = baseline * 0.98 + brightness * 0.02
+                                    val angle = validAngles.average()
 
-                                val movement = abs(brightness - baseline)
+                                    if (angle < 105) {
+                                        wentDown = true
 
-                                if (movement > 12) {
-                                    downDetected = true
-                                }
+                                        activity.runOnUiThread {
+                                            status = "Good depth — stand back up."
+                                        }
+                                    }
 
-                                val now = System.currentTimeMillis()
+                                    if (wentDown && angle > 160) {
 
-                                if (
-                                    downDetected &&
-                                    movement < 4 &&
-                                    now - lastRepTime > 1200 &&
-                                    reps < target
-                                ) {
-                                    downDetected = false
-                                    lastRepTime = now
+                                        val now = System.currentTimeMillis()
 
-                                    activity.runOnUiThread {
-                                        onRep()
+                                        if (now - lastRep > 1000) {
+
+                                            wentDown = false
+                                            lastRep = now
+
+                                            activity.runOnUiThread {
+                                                status = "Rep counted!"
+                                                onRep()
+                                            }
+                                        }
+                                    }
+
+                                    if (!wentDown && angle > 160) {
+                                        activity.runOnUiThread {
+                                            status = "Standing — squat down."
+                                        }
                                     }
                                 }
-                            }
-
-                            imageProxy.close()
+                                .addOnCompleteListener {
+                                    proxy.close()
+                                }
                         }
 
                         provider.unbindAll()
@@ -172,8 +207,43 @@ fun SquatCamera(
                     previewView
                 }
             )
-
-            Text("Stand back so your upper body is visible. Squat down and return to standing.")
+        } else {
+            Text("Camera permission is required.")
         }
     }
+}
+
+private fun getLegAngle(
+    hip: PointF?,
+    knee: PointF?,
+    ankle: PointF?
+): Double? {
+
+    if (hip == null || knee == null || ankle == null) {
+        return null
+    }
+
+    val ax = hip.x - knee.x
+    val ay = hip.y - knee.y
+
+    val bx = ankle.x - knee.x
+    val by = ankle.y - knee.y
+
+    val dot = ax * bx + ay * by
+
+    val magA =
+        sqrt((ax * ax + ay * ay).toDouble())
+
+    val magB =
+        sqrt((bx * bx + by * by).toDouble())
+
+    if (magA == 0.0 || magB == 0.0) {
+        return null
+    }
+
+    val cosine =
+        (dot / (magA * magB))
+            .coerceIn(-1.0, 1.0)
+
+    return Math.toDegrees(acos(cosine))
 }
