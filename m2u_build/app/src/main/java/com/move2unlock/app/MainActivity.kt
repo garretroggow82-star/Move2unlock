@@ -1,5 +1,6 @@
 package com.move2unlock.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -12,16 +13,30 @@ import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
 
-    private var blockedPackage: String? = null
+    private var blockedPackage by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        blockedPackage = intent.getStringExtra("blocked_package")
+        loadBlockedPackage(intent)
 
         setContent {
             Move2UnlockApp(blockedPackage)
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        loadBlockedPackage(intent)
+    }
+
+    private fun loadBlockedPackage(intent: Intent?) {
+        val prefs = getSharedPreferences("move2unlock", MODE_PRIVATE)
+
+        blockedPackage =
+            intent?.getStringExtra("blocked_package")
+                ?: prefs.getString("pending_package", null)
     }
 }
 
@@ -34,11 +49,16 @@ fun Move2UnlockApp(blockedPackage: String?) {
         "com.facebook.katana" -> "Facebook"
         "com.instagram.android" -> "Instagram"
         "com.zhiliaoapp.musically" -> "TikTok"
-        else -> "App"
+        else -> "Choose a blocked app"
     }
 
-    var reps by remember { mutableIntStateOf(0) }
-    var unlocked by remember { mutableStateOf(false) }
+    var reps by remember(blockedPackage) {
+        mutableIntStateOf(0)
+    }
+
+    var unlocked by remember(blockedPackage) {
+        mutableStateOf(false)
+    }
 
     MaterialTheme {
         Column(
@@ -69,9 +89,16 @@ fun Move2UnlockApp(blockedPackage: String?) {
                         style = MaterialTheme.typography.headlineSmall
                     )
 
+                    if (blockedPackage == null) {
+                        Text("Open Facebook, Instagram, or TikTok to start.")
+                        return@Column
+                    }
+
                     if (!unlocked) {
 
-                        Text("Complete 20 squats to unlock $appName for 30 minutes.")
+                        Text(
+                            "Complete 20 squats to unlock $appName for 30 minutes."
+                        )
 
                         Text(
                             "$reps / 20",
@@ -81,30 +108,21 @@ fun Move2UnlockApp(blockedPackage: String?) {
                         Button(
                             modifier = Modifier.fillMaxWidth(),
                             onClick = {
+                                reps++
 
-                                val newReps = reps + 1
-                                reps = newReps
+                                if (reps >= 20) {
 
-                                if (newReps >= 20) {
+                                    val unlockUntil =
+                                        System.currentTimeMillis() + 1_800_000L
 
-                                    blockedPackage?.let { pkg ->
-
-                                        val unlockUntil =
-                                            System.currentTimeMillis() +
-                                            (30 * 60 * 1000)
-
-                                        context
-                                            .getSharedPreferences(
-                                                "move2unlock",
-                                                0
-                                            )
-                                            .edit()
-                                            .putLong(
-                                                "unlock_$pkg",
-                                                unlockUntil
-                                            )
-                                            .apply()
-                                    }
+                                    context
+                                        .getSharedPreferences("move2unlock", 0)
+                                        .edit()
+                                        .putLong(
+                                            "unlock_$blockedPackage",
+                                            unlockUntil
+                                        )
+                                        .apply()
 
                                     unlocked = true
                                 }
@@ -115,21 +133,22 @@ fun Move2UnlockApp(blockedPackage: String?) {
 
                     } else {
 
-                        Text("You earned 30 minutes of access.")
+                        Text("$appName is unlocked for 30 minutes.")
 
                         Button(
                             modifier = Modifier.fillMaxWidth(),
                             onClick = {
 
-                                blockedPackage?.let { pkg ->
+                                val launchIntent =
+                                    context.packageManager
+                                        .getLaunchIntentForPackage(blockedPackage)
 
-                                    val launchIntent =
-                                        context.packageManager
-                                            .getLaunchIntentForPackage(pkg)
+                                if (launchIntent != null) {
+                                    launchIntent.addFlags(
+                                        Intent.FLAG_ACTIVITY_NEW_TASK
+                                    )
 
-                                    if (launchIntent != null) {
-                                        context.startActivity(launchIntent)
-                                    }
+                                    context.startActivity(launchIntent)
                                 }
                             }
                         ) {

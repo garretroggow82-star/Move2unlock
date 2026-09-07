@@ -7,27 +7,32 @@ import android.view.accessibility.AccessibilityEvent
 class AppBlockerService : AccessibilityService() {
 
     private val blockedApps = setOf(
+        "com.facebook.katana",
         "com.instagram.android",
-        "com.zhiliaoapp.musically",
-        "com.facebook.katana"
+        "com.zhiliaoapp.musically"
     )
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
 
-        val packageName = event.packageName?.toString() ?: return
+        val pkg = event.packageName?.toString() ?: return
 
-        if (packageName !in blockedApps) return
+        if (pkg !in blockedApps) return
 
         val prefs = getSharedPreferences("move2unlock", MODE_PRIVATE)
-        val unlockUntil = prefs.getLong("unlock_$packageName", 0L)
+
+        val unlockUntil = prefs.getLong("unlock_$pkg", 0L)
 
         if (System.currentTimeMillis() < unlockUntil) {
             return
         }
 
+        prefs.edit()
+            .putString("pending_package", pkg)
+            .apply()
+
         val intent = Intent(this, MainActivity::class.java).apply {
-            putExtra("blocked_package", packageName)
+            putExtra("blocked_package", pkg)
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP or
@@ -38,6 +43,5 @@ class AppBlockerService : AccessibilityService() {
         startActivity(intent)
     }
 
-    override fun onInterrupt() {
-    }
+    override fun onInterrupt() {}
 }
